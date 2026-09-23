@@ -1,0 +1,245 @@
+@page "/patient-aliases"
+@page "/patient-aliases/{PatientId:guid}"
+@rendermode InteractiveServer
+@inject IPatientAliasesService AliasesService
+@inject ILogger<PatientAliases> Logger
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@using PatientAliases.Web.DTOs
+@using PatientAliases.Web.Services
+@using PatientAliases.Web.Validation
+@using PatientAliases.Web.ViewModels
+@using System.ComponentModel.DataAnnotations
+
+<PageTitle>Patient Aliases</PageTitle>
+
+<div class="pa-panel" role="region" aria-label="Patient Aliases">
+    <!-- Dark gray title bar -->
+    <div class="pa-panel__header">Patient Aliases</div>
+
+    <div class="pa-panel__body">
+        <!-- Readonly Patient Name -->
+        <label class="pa-field-label" for="patient-name">Patient Name</label>
+        <input id="patient-name"
+               class="pa-readonly-input"
+               type="text"
+               value="@Vm.PatientName"
+               readonly
+               aria-readonly="true" />
+
+        <!-- Aliases sub-panel -->
+        <div class="pa-subpanel">
+            <div class="pa-subpanel__header">
+                <span>Aliases</span>
+                <button type="button"
+                        class="pa-icon-btn pa-icon-btn--add"
+                        title="Add alias"
+                        aria-label="Add alias"
+                        @onclick="AddAliasAsync"
+                        disabled="@Vm.IsBusy">
+                    <i class="bi bi-plus-lg" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <div class="pa-subpanel__body">
+                <table class="pa-table" aria-label="Patient aliases">
+                    <thead>
+                        <tr>
+                            <th style="width:22%">Last</th>
+                            <th style="width:22%">First</th>
+                            <th style="width:22%">Middle</th>
+                            <th style="width:22%">Suffix</th>
+                            <th style="width:12%; text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (Vm.Aliases.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="5" style="text-align:center; color:#888;">No aliases defined.</td>
+                            </tr>
+                        }
+                        @foreach (var alias in Vm.Aliases)
+                        {
+                            <tr @key="alias.Id">
+                                @if (alias.IsEditing)
+                                {
+                                    <td><input class="pa-input-inline" @bind="alias.Last"  maxlength="60" /></td>
+                                    <td><input class="pa-input-inline" @bind="alias.First" maxlength="60" /></td>
+                                    <td><input class="pa-input-inline" @bind="alias.Middle" maxlength="30" /></td>
+                                    <td><input class="pa-input-inline" @bind="alias.Suffix" maxlength="10" /></td>
+                                }
+                                else
+                                {
+                                    <td>@alias.Last</td>
+                                    <td>@alias.First</td>
+                                    <td>@alias.Middle</td>
+                                    <td>@alias.Suffix</td>
+                                }
+                                <td class="pa-actions">
+                                    <button type="button"
+                                            class="pa-icon-btn pa-icon-btn--edit"
+                                            title="@(alias.IsEditing ? "Finish editing" : "Edit alias")"
+                                            aria-label="@(alias.IsEditing ? "Finish editing" : "Edit alias")"
+                                            @onclick="() => ToggleEdit(alias)"
+                                            disabled="@Vm.IsBusy">
+                                        <i class="bi @(alias.IsEditing ? "bi-check-lg" : "bi-pencil-fill")" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="pa-icon-btn pa-icon-btn--delete"
+                                            title="Delete alias"
+                                            aria-label="Delete alias"
+                                            @onclick="() => DeleteAliasAsync(alias)"
+                                            disabled="@Vm.IsBusy">
+                                        <i class="bi bi-trash-fill" aria-hidden="true"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="pa-icon-btn pa-icon-btn--swap"
+                                            title="Swap with primary name"
+                                            aria-label="Swap with primary name"
+                                            @onclick="() => SwapAliasAsync(alias)"
+                                            disabled="@(Vm.IsBusy || alias.IsNew)">
+                                        <i class="bi bi-shuffle" aria-hidden="true"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @if (ValidationErrors.Count > 0)
+                {
+                    <ul class="pa-validation" role="alert">
+                        @foreach (var err in ValidationErrors)
+                        {
+                            <li>@err.ErrorMessage</li>
+                        }
+                    </ul>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="pa-footer">
+        <button type="button"
+                class="pa-btn pa-btn--save"
+                @onclick="SaveAsync"
+                disabled="@Vm.IsBusy">
+            Save
+        </button>
+        <button type="button"
+                class="pa-btn pa-btn--cancel"
+                @onclick="Cancel"
+                disabled="@Vm.IsBusy">
+            Cancel
+        </button>
+    </div>
+</div>
+
+@code {
+    /// <summary>Optional route parameter — defaults to demo seed patient.</summary>
+    [Parameter] public Guid? PatientId { get; set; }
+
+    private PatientAliasesViewModel Vm { get; } = new();
+    private List<ValidationResult> ValidationErrors { get; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Vm.PatientId = PatientId ?? InMemoryPatientAliasesService.DemoPatientId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            Vm.IsBusy = true;
+            var patient = await AliasesService.GetPatientAsync(Vm.PatientId);
+            Vm.PatientName = patient?.DisplayName ?? string.Empty;
+
+            var aliases = await AliasesService.GetAliasesAsync(Vm.PatientId);
+            Vm.Aliases.Clear();
+            foreach (var a in aliases) Vm.Aliases.Add(a);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load patient aliases for {PatientId}", Vm.PatientId);
+        }
+        finally
+        {
+            Vm.IsBusy = false;
+        }
+    }
+
+    /// <summary>Adds a blank alias row already in edit mode.</summary>
+    private Task AddAliasAsync()
+    {
+        Vm.Aliases.Add(new AliasDto { IsEditing = true, IsNew = true });
+        return Task.CompletedTask;
+    }
+
+    private void ToggleEdit(AliasDto alias) => alias.IsEditing = !alias.IsEditing;
+
+    private async Task DeleteAliasAsync(AliasDto alias)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete alias '{alias.Last}, {alias.First}'?");
+        if (!confirmed) return;
+        Vm.Aliases.Remove(alias);
+    }
+
+    private async Task SwapAliasAsync(AliasDto alias)
+    {
+        try
+        {
+            Vm.IsBusy = true;
+            var updated = await AliasesService.SwapAliasWithPrimaryAsync(Vm.PatientId, alias.Id);
+            Vm.PatientName = updated.DisplayName;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Swap failed for alias {AliasId}", alias.Id);
+        }
+        finally
+        {
+            Vm.IsBusy = false;
+        }
+    }
+
+    /// <summary>Validates and persists all aliases.</summary>
+    private async Task SaveAsync()
+    {
+        ValidationErrors.Clear();
+        var errors = AliasValidator.Validate(Vm.Aliases);
+        if (errors.Count > 0)
+        {
+            ValidationErrors.AddRange(errors);
+            return;
+        }
+
+        try
+        {
+            Vm.IsBusy = true;
+            foreach (var a in Vm.Aliases) { a.IsEditing = false; a.IsNew = false; }
+
+            await AliasesService.SaveAliasesAsync(new SaveAliasesRequest
+            {
+                PatientId = Vm.PatientId,
+                Aliases = Vm.Aliases.ToList()
+            });
+            Logger.LogInformation("Aliases saved for {PatientId}", Vm.PatientId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Save failed for {PatientId}", Vm.PatientId);
+        }
+        finally
+        {
+            Vm.IsBusy = false;
+        }
+    }
+
+    /// <summary>Discards local changes and reloads from the service.</summary>
+    private async Task Cancel() => await LoadAsync();
+}
